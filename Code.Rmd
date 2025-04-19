@@ -1,0 +1,489 @@
+---
+title: "Supervised Learning Assignment 3"
+author: "Khuliso Mmbi MMBKHU001"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Data evaluation
+```{r}
+df <- read.csv("heart_failure_clinical_records_dataset.csv")
+df$anaemia <- as.factor(df$anaemia)
+df$high_blood_pressure <- as.factor(df$high_blood_pressure)
+df$diabetes <- as.factor(df$diabetes)
+df$sex <- as.factor(df$sex)
+df$smoking <- as.factor(df$smoking)
+df$DEATH_EVENT <- as.factor(df$DEATH_EVENT)
+
+# Split the data into training and testing sets
+library(caret)
+set.seed(123)
+train_index <- createDataPartition(df$DEATH_EVENT, p = 0.8, list = FALSE)
+train_data <- df[train_index, ]
+test_data <- df[-train_index, ]
+
+#Summary statistics
+summary(train_data)
+
+#Numerical Summary
+# Filter categorical variables
+categorical_vars <- c("anaemia", "high_blood_pressure", "diabetes", "sex", "smoking", "DEATH_EVENT")
+
+categorical_vars <- train_data[, categorical_vars]
+summary(categorical_vars)
+
+# Filter numerical variables
+numerical_vars <- c("age", "creatinine_phosphokinase", "ejection_fraction", "platelets", "serum_creatinine", "serum_sodium", "time")
+numerical_vars  <- train_data[, numerical_vars]
+summary(numerical_vars )
+```
+
+```{r}
+library(ggplot2)
+
+# Sample data
+data <- data.frame(
+  condition = c("Anaemia", "High Blood Pressure", "Diabetes", "Sex", "Smoking", "Death Event"),
+  no = c(133, 159, 140, 80, 161, 163),
+  yes = c(107, 81, 100, 160, 79, 77)
+)
+```
+
+# Modelling: Question B
+```{r}
+set.seed(20)
+library(pROC)
+library(e1071)
+
+# Build a support vector machine using a radial kernel function with cost=0.1 and gamma=0.1
+svm_model <- svm(DEATH_EVENT ~ ., data = train_data, kernel = "radial", cost = 0.1, gamma = 0.1, probability = TRUE)
+
+# Predictions on test data
+test_predictions <- predict(svm_model, newdata = test_data, probability = TRUE)
+prob_predictions <- attr(test_predictions, "probabilities")[, 2]
+
+# Evaluation metrics
+confusion_matrix <- table(Actual = test_data$DEATH_EVENT, Predicted = test_predictions)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+specificity <- confusion_matrix[1, 1] / sum(confusion_matrix[1, ])
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+f1_score <- 2 * precision * recall / (precision + recall)
+
+# ROC AUC
+roc_curve <- roc(test_data$DEATH_EVENT, prob_predictions)
+roc_auc <- auc(roc_curve)
+
+#METRICS
+cat("Classification Accuracy:", accuracy, "\n")
+cat("Recall:", recall, "\n")
+cat("Specificity:", specificity, "\n")
+cat("Precision:", precision, "\n")
+cat("F1 Score:", f1_score, "\n")
+cat("ROC AUC:", roc_auc, "\n")
+
+
+
+```
+
+# Question C
+```{r}
+set.seed(20)
+svm_evaluation <- function(train_data, test_data, cost = 0.1, gamma = 0.1) {
+  svm_model <- svm(DEATH_EVENT ~ ., data = train_data, kernel = "radial", cost = cost, gamma = gamma, probability = TRUE)
+  y_pred <- predict(svm_model, newdata = test_data, probability = TRUE)
+  prob_predictions <- attr(y_pred, "probabilities")[, 2]
+  
+  confusion <- table(Predicted = y_pred, Actual = test_data$DEATH_EVENT)
+  accuracy <- sum(diag(confusion)) / sum(confusion)
+  recall <- confusion[2, 2] / sum(confusion[2, ])
+  specificity <- confusion[1, 1] / sum(confusion[1, ])
+  precision <- confusion[2, 2] / sum(confusion[, 2])
+  f1 <- 2 * precision * recall / (precision + recall)
+  
+  roc_curve <- roc(test_data$DEATH_EVENT, prob_predictions)
+  roc_auc <- auc(roc_curve)
+  
+  return(c(accuracy, recall, specificity, precision, f1, roc_auc))
+}
+
+# Repeated evaluation
+num_repeats <- 100
+metrics <- matrix(NA, nrow = num_repeats, ncol = 6)
+
+for (i in 1:num_repeats) {
+  set.seed(i)
+  train_index <- createDataPartition(df$DEATH_EVENT, p = 0.8, list = FALSE)
+  train_data <- df[train_index, ]
+  test_data <- df[-train_index, ]
+  metrics[i, ] <- svm_evaluation(train_data, test_data)
+}
+
+# average metrics
+avg_metrics <- colMeans(metrics)
+names(avg_metrics) <- c("Accuracy", "Recall", "Specificity", "Precision", "F1 Score", "ROC AUC")
+
+#verage metrics
+print("Average Metrics:")
+print(avg_metrics)
+
+# Boxplots
+metrics_df <- data.frame(metrics)
+colnames(metrics_df) <- c("Accuracy", "Recall", "Specificity", "Precision", "F1 Score", "ROC AUC")
+metrics_df <- reshape2::melt(metrics_df)
+
+ggplot(metrics_df, aes(x = variable, y = value)) + 
+  geom_boxplot() + 
+  labs(title = "SVM Performance Metrics Over 100 Runs", x = "Metric", y = "Value")
+
+
+
+```
+
+# Question D
+```{r}
+set.seed(20)
+# Repeated Evaluation with Different Hyperparameters
+cost_values <- c(0.1, 1, 10)
+gamma_values <- c(0.01, 0.1, 1)
+hyperparameters <- expand.grid(cost = cost_values, gamma = gamma_values)
+results <- list()
+
+num_repeats <- 100
+
+for (i in 1:nrow(hyperparameters)) {
+  cost <- hyperparameters$cost[i]
+  gamma <- hyperparameters$gamma[i]
+  
+  metrics <- matrix(NA, nrow = num_repeats, ncol = 6)
+  
+  for (j in 1:num_repeats) {
+    set.seed(j)
+    train_index <- createDataPartition(df$DEATH_EVENT, p = 0.8, list = FALSE)
+    train_data <- df[train_index, ]
+    test_data <- df[-train_index, ]
+    metrics[j, ] <- svm_evaluation(train_data, test_data, cost, gamma)
+  }
+  
+  avg_metrics <- colMeans(metrics)
+  results[[i]] <- list(cost = cost, gamma = gamma, metrics = avg_metrics)
+}
+
+result_table <- matrix(NA, nrow = nrow(hyperparameters), ncol = 8,
+                       dimnames = list(NULL, c("Cost", "Gamma", "Accuracy", "Recall", "Specificity", "Precision", "F1 Score", "ROC AUC")))
+
+for (i in 1:nrow(hyperparameters)) {
+  result_table[i, 1:2] <- c(results[[i]]$cost, results[[i]]$gamma)
+  result_table[i, 3:8] <- results[[i]]$metrics
+}
+
+print("Results:")
+print(result_table)
+
+library(ggplot2)
+
+# Convert result_table to data frame for plotting
+result_df <- as.data.frame(result_table)
+result_df$Cost <- as.factor(result_df$Cost)
+result_df$Gamma <- as.factor(result_df$Gamma)
+
+# Melt the data for plotting
+melted_df <- reshape2::melt(result_df, id.vars = c("Cost", "Gamma"),
+                            measure.vars = c("Accuracy", "Recall", "Specificity", "Precision", "F1 Score", "ROC AUC"))
+
+# Plotting bar graphs
+ggplot(melted_df, aes(x = Cost, y = value, fill = Gamma)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(x = "Cost", y = "Value", fill = "Gamma", title = "Performance Metrics across Hyperparameters") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+#Question E
+```{r}
+set.seed(20)
+df <- read.csv("heart_failure_clinical_records_dataset.csv")
+
+# Convert DEATH_EVENT to a factor with valid level names
+df$DEATH_EVENT <- factor(df$DEATH_EVENT, levels = c(0, 1), labels = c("No", "Yes"))
+
+df$anaemia <- as.factor(df$anaemia)
+df$high_blood_pressure <- as.factor(df$high_blood_pressure)
+df$diabetes <- as.factor(df$diabetes)
+df$sex <- as.factor(df$sex)
+df$smoking <- as.factor(df$smoking)
+
+# Split the data into training and testing sets
+library(caret)
+set.seed(123)
+train_index <- createDataPartition(df$DEATH_EVENT, p = 0.8, list = FALSE)
+train_data <- df[train_index, ]
+test_data <- df[-train_index, ]
+
+
+library(caret)
+library(e1071)
+
+#Grid of hyperparameters
+hyperparameters <- expand.grid(C = c(0.1, 1, 10), sigma = c(0.01, 0.1, 1))
+
+# Function to perform grid search and return the best model
+perform_grid_search <- function(train_data, hyperparameters) {
+  # Create a train control with repeated cross-validation
+  train_control <- trainControl(method = "repeatedcv", number = 5, repeats = 3, 
+                                classProbs = TRUE, summaryFunction = twoClassSummary)
+  
+  # Perform grid search
+  svm_model <- train(DEATH_EVENT ~ ., data = train_data, method = "svmRadial",
+                     trControl = train_control, tuneGrid = hyperparameters, 
+                     metric = "ROC", preProc = c("center", "scale"))
+  
+  return(svm_model)
+}
+
+# Ggrid search on training data
+svm_best_model <- perform_grid_search(train_data, hyperparameters)
+
+# Report the best model parameters
+print("Best Model Parameters:")
+print(svm_best_model$bestTune)
+
+# Test the best model on the test data
+test_predictions <- predict(svm_best_model, newdata = test_data, type = "prob")[, 2]
+predicted_classes <- predict(svm_best_model, newdata = test_data)
+
+# Evaluate the performance on the test data
+confusion <- confusionMatrix(predicted_classes, test_data$DEATH_EVENT)
+test_accuracy <- confusion$overall["Accuracy"]
+test_recall <- confusion$byClass["Recall"]
+test_precision <- confusion$byClass["Precision"]
+test_f1 <- confusion$byClass["F1"]
+
+roc_curve <- roc(test_data$DEATH_EVENT, test_predictions)
+roc_auc <- auc(roc_curve)
+
+# Calculate specificity
+TN <- confusion$table[1,1]  # True Negatives
+FP <- confusion$table[1,2]  # False Positives
+specificity <- TN / (TN + FP)
+
+
+
+# Print the performance metrics on the test data
+print("Performance on Test Data:")
+print(paste("Accuracy:", test_accuracy))
+print(paste("Recall:", test_recall))
+print(paste("Precision:", test_precision))
+print(paste("F1 Score:", test_f1))
+print(paste("ROC AUC:", roc_auc))
+print(paste("Specificity:", specificity))
+
+```
+
+# Question F
+```{r}
+set.seed(20)
+print("Comparison of Findings:")
+print("=====================================")
+
+# Performance of the best model from grid search
+best_model_index <- which.max(svm_best_model$results$ROC)  # Find the index of the best model
+best_model_results <- svm_best_model$results[best_model_index, ]
+
+print("Performance of Best Model from Grid Search:")
+print(paste("Accuracy:", best_model_results[["Accuracy"]]))
+print(paste("Recall:", best_model_results[["Recall"]]))
+print(paste("Precision:", best_model_results[["Precision"]]))
+print(paste("F1:", best_model_results[["F1"]]))
+print(paste("ROC:", best_model_results[["ROC"]]))
+
+# Assuming result_table is a matrix with columns: Cost, Gamma, Accuracy, Recall, Precision, F1, ROC AUC
+avg_performance <- colMeans(result_table[, 3:7], na.rm = TRUE)
+
+print("Average Performance from Repeated Runs:")
+print(paste("Accuracy:", avg_performance[1]))
+print(paste("Recall:", avg_performance[2]))
+print(paste("Precision:", avg_performance[3]))
+print(paste("F1 Score:", avg_performance[4]))
+print(paste("ROC AUC:", avg_performance[5]))
+
+
+
+```
+
+#Data visualisation - Question a
+```{r}
+library(ggplot2)
+
+# Scatter plot for pairs of features
+pairs(train_data[, c("age", "creatinine_phosphokinase", "ejection_fraction", "platelets", "serum_creatinine", "serum_sodium", "time")], col = train_data$DEATH_EVENT)
+
+```
+
+
+# QUESTION 2 - NEURAL NETWORKS
+
+# Data evaluation
+```{r}
+
+library(dplyr)
+BikeRental <- read.csv('SeoulBikeData.csv', fileEncoding = "Latin1")
+
+BikeRental$Date <- as.Date(BikeRental$Date, format = "%d/%m/%Y")
+
+summary(BikeRental)
+str(BikeRental)
+
+
+# Correlation matrix for numeric variables
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+print(cor_matrix)
+
+```
+
+# Question B
+```{r}
+library(neuralnet)
+library(caret)
+library(e1071)
+
+set.seed(20)
+
+# Convert date data to numeric and factirs
+BikeRental$Date <- as.numeric(as.Date(BikeRental$Date, format = "%d/%m/%Y"))
+BikeRental[, 12:14] <- lapply(BikeRental[, 12:14], as.factor)
+BikeRental <- cbind(BikeRental, model.matrix(~ Seasons + Holiday + Functioning.Day - 1, data = BikeRental))
+BikeRental <- BikeRental[, -c(12:14)] 
+
+# Scaling numerical variable
+BikeRental[, 1:11] <- scale(BikeRental[, 1:11])
+
+# Data standardization
+BikeRental.st <- BikeRental
+colnames(BikeRental.st) <- make.names(colnames(BikeRental.st))
+
+# Train and Test set
+samp <- createDataPartition(BikeRental.st[,"Rented.Bike.Count"], p = 0.8, list = FALSE)
+BikeRental.st.train <- BikeRental.st[samp,]
+BikeRental.st.test <- BikeRental.st[-samp,]
+
+
+input_columns <- setdiff(names(BikeRental.st.train), "Rented.Bike.Count")
+formula <- as.formula(paste("Rented.Bike.Count ~", paste(input_columns, collapse = " + ")))
+
+# Neural network model
+set.seed(20)
+BikeRental.nn <- neuralnet(formula,
+                           data = BikeRental.st.train,
+                           hidden = c(2),  # Hidden layer sizes
+                           linear.output = TRUE,
+                           lifesign = "minimal",
+                           threshold = 0.01,
+                           stepmax = 1e+06,
+                           algorithm = "rprop+")
+
+plot(BikeRental.nn)
+
+# Predicting on the test set
+predictions <- compute(BikeRental.nn, BikeRental.st.test[, input_columns])$net.result
+
+# Model Evaluation
+true_values <- BikeRental.st.test$Rented.Bike.Count
+predicted_values <- predictions
+mse <- mean((true_values - predicted_values)^2)
+print(paste("Mean Squared Error:", mse))
+
+```
+
+
+# Question C
+```{r}
+set.seed(20)
+hidden_units <- list(c(1), c(2), c(3)) 
+l1_regularization <- c(1e-3,1e-4,1e-5)
+epochs <- c(100,500,1000)
+activation_functions <- c("rectifier","Tanh")
+hyper_params <- list(hidden = hidden_units, l1 = l1_regularization, epochs= epochs, activation = activation_functions ) 
+
+ 
+model_grid <- h2o.grid(
+  algorithm = "deeplearning",
+  grid_id = "nn_grid1",
+  hyper_params = hyper_params,
+  x = c(1,3:17),
+  y = 2,
+  training_frame = Bike.st.h2oTrain,
+  validation_frame = Bike.st.h2oTest,
+  seed = 1,
+  reproducible = TRUE, nfolds = 10)
+
+model_grid
+best_model <- h2o.getModel(model_grid@model_ids[[1]])
+h2o.rmse(best_model, xval = TRUE)
+
+```
+
+#Question D
+```{r}
+set.seed(20)
+# Building the best NN model
+Bike_best <- h2o.deeplearning(x = c(1,3:17),
+                               y = 2, 
+                               training_frame = Bike.st.h2oTrain, 
+                               validation_frame = Bike.st.h2oTest, 
+                               activation = "Tanh", 
+                               hidden = c(3),
+                               l1 = 1E-5,
+                               seed = 1, 
+                               reproducible = TRUE,
+                               epochs = 78.2, 
+                               variable_importances = TRUE, 
+                               export_weights_and_biases = TRUE)
+
+Bike_best
+varimp_best_model <- h2o.varimp(Bike_best)
+
+# Create bar plots for variable importance
+ggplot(data = varimp_first_model, aes(x = reorder(variable, -relative_importance), y = relative_importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variable", y = "Relative Importance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data = varimp_best_model, aes(x = reorder(variable, -relative_importance), y = relative_importance)) +
+  geom_bar(stat = "identity", fill = "lightgreen") +
+  labs(x = "Variable", y = "Relative Importance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
